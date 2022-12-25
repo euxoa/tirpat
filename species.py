@@ -69,12 +69,34 @@ d2 = d.pipe(lambda df: df[df['p'] > pmin]).\
 d2 = d2.groupby('species', group_keys=True).\
     apply(lambda x: x.sort_values('p', ascending=False).head(nrows)).\
     reset_index(drop=True)
-# For output only (FIXME, this should be later).
-d2 = d2.loc[:,('species' ,'cname', 'p', 'nicetime')]
 
 if req_full:
     d2 = d2.groupby('species').filter(lambda x: x.shape[0] == nrows)
 
+d3 = d2.loc[:,('species' ,'cname', 'p', 'nicetime')]
+print(d3.to_string())
 
-print(d2.to_string())
+# {'start': 2533.5, 'end': 2536.5, 'species': 'Strix aluco', 'cname': 'lehtopöllö',
+#  'p': 0.5075, 'file': 'res/res-home-20221225_064256.txt',
+#  't_within': 2535.0, 't': Timestamp('2022-12-25 07:25:11+0000', tz='UTC'),
+#  'nicetime': 'Sunday 25.12. 09:25'}
 
+# We need to read ls() from the raw dir, then do the re match thing below
+# for files there to get time -> filename mapping into a dir,
+# then use that to get input files from res filenames.
+# Note that it doesn't need to exist, that should return a note for
+# that soxline.
+
+def soxline(r):
+    #>>> import re
+    #>>> pattern = r"(\d{8}_\d{6})"
+    #>>> re.search(pattern, row['file']).group(1)
+    #'20221225_064256'
+    ifile = r['file'] + '.flac'
+    ofile = r['cname']
+    t_within = r['t_within']
+    return f'sox {ifile} {ofile} trim {t_within-10} 20 norm -4'
+
+if args.clip is not None:
+    for idx, row in d2.iterrows():
+        print(soxline(dict(row)))
