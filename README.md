@@ -14,7 +14,7 @@ For continuous recording, use `obsloop.py`, run in background. To set up:
 
 * The script `obsloop.sh` has parameters at the start, and more in `arecord` and `analyze.py` calls, you
 need to check them and edit approriately. First run `arecord` manually, then do the same with the analyzer
-to find correct parameters. Finally, run the who script with files of a few seconds only to see it works. 
+to find correct parameters. Finally, run the whole script with `duration` set short to see everything it works. 
 
 The script `species.py` is more generally useful for checking observations from CSV-style result files
 of the BirdNET Analyzer, and for splitting high-confidence samples from the original audio files to be
