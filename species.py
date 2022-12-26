@@ -1,7 +1,40 @@
-import glob, re, argparse, hashlib
+import glob, re, argparse, hashlib, subprocess, time
 import pandas as pd
 
-parser = argparse.ArgumentParser()
+dscr="""
+A script for displaying summaries of BirdNET-Analyzer observations from a buch of 
+CSV-style audio files, with YYYYmmdd_hhmmss in their file names. Also produces
+audio clips of observations by calling sox.
+"""
+
+eplg="""
+Examples:
+
+   # Run with defaults to get a list of obs per species
+   python species.py res/res-* 
+
+   # Only owls
+   python species.py --species 'owl|Strix' res/res-*
+
+   # Five records per species, min 60 seconds between occurrences
+   python species.py -l 60 -n 5
+
+   # Lower confidence threshold to .7, but require full set (default 3) 
+   # per species to show
+   python species.py -l 60 -n 5 --full-only
+
+   # Like above, but instead of a list, produce clips
+   python species.py -l 60 -n 5 --full-only --clips raw_dir clips_dir
+
+   # Observation counts of those species
+   python species.py -l 60 -n 5 --full-only --counts
+
+"""
+
+
+parser = argparse.ArgumentParser(description=dscr, epilog=eplg,
+                                 formatter_class=argparse.RawTextHelpFormatter)
+
 
 parser.add_argument("-p", "--pmin", type=float, default=0.9,
                     help="confidence, minimum (default: 0.9)")
@@ -15,6 +48,8 @@ parser.add_argument('--species',
                     help="species regex to filter with")
 parser.add_argument("input_files", nargs="+",
                     help="input files")
+parser.add_argument("--timezone", type=str, default=time.tzname[0],
+                    help="time zone for species lists (not files, UTC metadata there)")
 parser.add_argument('--clip', nargs=2, help='dir of orig. audio and dir of clips')
 parser.add_argument('--counts', action=argparse.BooleanOptionalAction,
                     help="accepted obs counts per species")
@@ -26,9 +61,11 @@ minlag = args.minlag
 nrows = args.nrows
 sp_rex = args.species
 input_files = args.input_files
+timezone = args.timezone
+
+
 output_type = "flac"
 output_duration = 20
-timezone = "EET"
 
 if args.clip is not None:
     raw_dir = args.clip[0] 
@@ -121,16 +158,24 @@ else:
         if orig:
             start, p, species, utctime = r['start'], r['p'], r['species'], r['utctime']
             # Comment goes to the file as metadata.
-            comment = (f"--comment 'species={species}, confidence={p}, time={utctime}, "
-                       f"orig_file={orig}, start={start}, confidence={p}'")
+            comment = (f"species={species}, confidence={p}, time={utctime}, "
+                       f"orig_file={orig}, start={start}, confidence={p}")
             t_within = r['t_within']
             date = file_ptrn.split('_')[0]
             hsh = hashlib.md5(comment.encode('latin1')).hexdigest()[:5]
             clip = f"{clip_dir}/{r['cname']}_{date}_{hsh}.{output_type}"
-            return (f'sox {orig} {comment} {clip}'
-                    f' trim {t_within-output_duration//2} {output_duration} norm -4')
+            return ['sox', orig, '--comment', comment, clip, 
+                    'trim', str(t_within - output_duration//2), str(output_duration),
+                    'highpass', str(50), 'norm', str(-4)]
         else:
             None
     for idx, row in d_samples.iterrows():
-        print(soxline(dict(row)))
+        line = soxline(dict(row))
+        if line is None:
+            print("No raw match for", row['file'])
+        else:
+            print(' '.join(line[:2]), '...')
+            subprocess.run(line)
+            
+        
 
