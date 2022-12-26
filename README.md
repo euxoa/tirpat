@@ -1,6 +1,6 @@
 # tirpat
-Minimal scripts to run BirdNET Analyzer continuously on USB audio, in Raspberry Pi,
-and to check results, like to get compact species and observation lists, and to clip audio of those
+Minimal scripts to run BirdNET Analyzer continuously on USB audio, for example in Raspberry Pi 4,
+and to get compact species and observation lists, and to clip audio of those
 for storing or checking in, e.g., Audacity.
 
 This requires at least Python 3 (3.9+ I think), the 
