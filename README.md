@@ -1,5 +1,5 @@
 # tirpat
-Minimal scripts to run BirdNET Analyser continuously on USB audio, in Raspberry Pi. 
+Minimal scripts to run BirdNET Analyzer continuously on USB audio, in Raspberry Pi. 
 
 This requires at least Python 3 (3.9+ I think), the 
 [BirdNet Analyzer](https://github.com/kahst/BirdNET-Analyzer), several Python packages like pandas, and sox.
