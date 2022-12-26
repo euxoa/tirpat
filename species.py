@@ -1,6 +1,5 @@
+import glob, re, argparse, hashlib
 import pandas as pd
-# import glob
-import argparse
 
 parser = argparse.ArgumentParser()
 
@@ -10,22 +9,26 @@ parser.add_argument("-l", "--minlag", type=float, default=2.0,
                     help="seconds, min between adjacent included rows (default: 2.0)")
 parser.add_argument("-n", "--nrows", type=int, default=3,
                     help="max number of rows per species (default: 3)")
-parser.add_argument('--full', action=argparse.BooleanOptionalAction,
-                    help="require full number of lines for species")
+parser.add_argument('--full-only', action=argparse.BooleanOptionalAction,
+                    help="require max number (nrows) of lines for species")
 parser.add_argument('--species',
-                    help="species regex")
+                    help="species regex to filter with")
 parser.add_argument("input_files", nargs="+",
                     help="input files")
-parser.add_argument('--clip', nargs=2, help='clip input and output directories')
+parser.add_argument('--clip', nargs=2, help='dir of orig. audio and dir of clips')
+parser.add_argument('--counts', action=argparse.BooleanOptionalAction,
+                    help="accepted obs counts per species")
 
 args = parser.parse_args()
 
 pmin = args.pmin
 minlag = args.minlag
 nrows = args.nrows
-req_full = args.full
 sp_rex = args.species
 input_files = args.input_files
+output_type = "flac"
+output_duration = 20
+timezone = "EET"
 
 if args.clip is not None:
     raw_dir = args.clip[0] 
@@ -54,27 +57,34 @@ if sp_rex is not None:
 d['t_within'] = (d['start'] + d['end'])/2
 d['t'] = (pd.to_datetime(d.file, format="%Y%m%d_%H%M%S", exact=False, utc=True) +
           pd.to_timedelta(d['t_within'], unit='s'))
-d['nicetime'] = d.t.dt.tz_convert('EET').dt.strftime('%A %d.%m. %H:%M')
+d['nicetime'] = d.t.dt.tz_convert(timezone).dt.strftime('%A %d.%m. %H:%M') # For output
+d['utctime'] = d.t.dt.strftime('%Y-%m-%d %H:%M UTC') # For clip metadata
     
 
 # .droplevel(0) or .droplevel('species') is nice but crashes
 # if you have zero species (empty data frame) after species rex for example.
 # the group_keys thing is needed for the same reason.
+# With grouping, another way around would be groupby(..., as_index=False), then
+# you don't need to reset the index afterwards.
+
 # So, first take only trustworthy lines, and remove adjacent obs.
-d2 = d.pipe(lambda df: df[df['p'] > pmin]).\
+d_trust = d.pipe(lambda df: df[df['p'] > pmin]).\
     groupby('species', group_keys=True).\
     apply(lambda x: deduplicate(x, 't', pd.to_timedelta(minlag, unit='s'))).\
     reset_index(drop=True)
+
+# Counts (maybe not needed)
+d_counts = d_trust.groupby('species', as_index=False).size().rename(columns={'size':'count'})
+
+
 # Head, or only the best rows.
-d2 = d2.groupby('species', group_keys=True).\
+d_samples = d_trust.groupby('species', group_keys=True).\
     apply(lambda x: x.sort_values('p', ascending=False).head(nrows)).\
     reset_index(drop=True)
 
-if req_full:
-    d2 = d2.groupby('species').filter(lambda x: x.shape[0] == nrows)
+if args.full_only:
+    d_samples = d_samples.groupby('species').filter(lambda x: x.shape[0] == nrows)
 
-d3 = d2.loc[:,('species' ,'cname', 'p', 'nicetime')]
-print(d3.to_string())
 
 # {'start': 2533.5, 'end': 2536.5, 'species': 'Strix aluco', 'cname': 'lehtopöllö',
 #  'p': 0.5075, 'file': 'res/res-home-20221225_064256.txt',
@@ -87,16 +97,40 @@ print(d3.to_string())
 # Note that it doesn't need to exist, that should return a note for
 # that soxline.
 
-def soxline(r):
-    #>>> import re
-    #>>> pattern = r"(\d{8}_\d{6})"
-    #>>> re.search(pattern, row['file']).group(1)
-    #'20221225_064256'
-    ifile = r['file'] + '.flac'
-    ofile = r['cname']
-    t_within = r['t_within']
-    return f'sox {ifile} {ofile} trim {t_within-10} 20 norm -4'
 
-if args.clip is not None:
-    for idx, row in d2.iterrows():
+if args.clip is None:
+    # Just show the obs list or counts
+    if args.counts:
+        # Show counts with max p, for species on the list (note potential --full-only)
+        d_show = d_samples.groupby(['species', 'cname'], as_index=False)['p'].max().\
+            merge(d_counts).sort_values('count', ascending=False)
+        print(d_show.to_string())
+    else:
+        # Show best obs per species
+        d_show = d_samples.loc[:,('species' ,'cname', 'p', 'nicetime')]
+        print(d_show.to_string())
+else:
+    # Make clips
+    date_ptrn = re.compile(r"(\d{8}_\d{6})")
+    d_samples['file_ptrn'] = [re.search(date_ptrn, file).group(1) for file in d_samples['file']]
+    p2raw   = { re.search(date_ptrn, file).group(1) : file for file in glob.glob(f'{raw_dir}/*') }
+
+    def soxline(r):
+        file_ptrn = r['file_ptrn']
+        orig = p2raw.get(r['file_ptrn'])
+        if orig:
+            start, p, species, utctime = r['start'], r['p'], r['species'], r['utctime']
+            # Comment goes to the file as metadata.
+            comment = (f"--comment 'species={species}, confidence={p}, time={utctime}, "
+                       f"orig_file={orig}, start={start}, confidence={p}'")
+            t_within = r['t_within']
+            date = file_ptrn.split('_')[0]
+            hsh = hashlib.md5(comment.encode('latin1')).hexdigest()[:5]
+            clip = f"{clip_dir}/{r['cname']}_{date}_{hsh}.{output_type}"
+            return (f'sox {orig} {comment} {clip}'
+                    f' trim {t_within-output_duration//2} {output_duration} norm -4')
+        else:
+            None
+    for idx, row in d_samples.iterrows():
         print(soxline(dict(row)))
+
