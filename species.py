@@ -51,6 +51,8 @@ parser.add_argument("input_files", nargs="+",
 parser.add_argument("--timezone", type=str, default=time.tzname[0],
                     help="time zone for species lists (not files, UTC metadata there)")
 parser.add_argument('--clip', nargs=2, help='dir of orig. audio and dir of clips')
+parser.add_argument('--clap', action=argparse.BooleanOptionalAction,
+                    help="clip, assuming origs are in 'raw' and clips are in 'clips'")
 parser.add_argument('--counts', action=argparse.BooleanOptionalAction,
                     help="accepted obs counts per species")
 
@@ -67,9 +69,12 @@ timezone = args.timezone
 output_type = "flac"
 output_duration = 20
 
-if args.clip is not None:
-    raw_dir = args.clip[0] 
-    clip_dir = args.clip[1]
+if args.clap:
+    do_clip, raw_dir, clip_dir = True, "raw", "clips"
+elif args.clip is not None:
+    do_clip, raw_dir, clip_dir = True, args.clip[0], args.clip[1]
+else:
+    do_clip, raw_dir, clip_dir = False, None, None
 
 # pd.set_option('display.max_rows', None)
 
@@ -135,7 +140,7 @@ if args.full_only:
 # that soxline.
 
 
-if args.clip is None:
+if not do_clip:
     # Just show the obs list or counts
     if args.counts:
         # Show counts with max p, for species on the list (note potential --full-only)
