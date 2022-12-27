@@ -1,6 +1,7 @@
 # tirpat
-Minimal scripts to run BirdNET Analyzer continuously on USB audio, in Raspberry Pi,
-and to check results.
+Minimal scripts to run BirdNET Analyzer continuously on USB audio, for example in Raspberry Pi 4,
+and to get compact species and observation lists, and to clip audio of those
+for storing or checking in, e.g., Audacity.
 
 This requires at least Python 3 (3.9+ I think), the 
 [BirdNet Analyzer](https://github.com/kahst/BirdNET-Analyzer), several Python packages like pandas,
@@ -14,7 +15,7 @@ For continuous recording, use `obsloop.py`, run in background. To set up:
 
 * The script `obsloop.sh` has parameters at the start, and more in `arecord` and `analyze.py` calls, you
 need to check them and edit approriately. First run `arecord` manually, then do the same with the analyzer
-to find correct parameters. Finally, run the who script with files of a few seconds only to see it works. 
+to find correct parameters. Finally, run the whole script with `duration` set short to see everything it works. 
 
 The script `species.py` is more generally useful for checking observations from CSV-style result files
 of the BirdNET Analyzer, and for splitting high-confidence samples from the original audio files to be
