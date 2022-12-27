@@ -91,9 +91,9 @@ d.rename(columns = {"Scientific name" : "species",
 if sp_rex is not None:
     d = d.loc[d.species.str.contains(sp_rex) | d.cname.str.contains(sp_rex) ]
 
-d['t_within'] = (d['start'] + d['end'])/2
+d['t_center'] = (d['start'] + d['end'])/2
 d['t'] = (pd.to_datetime(d.file, format="%Y%m%d_%H%M%S", exact=False, utc=True) +
-          pd.to_timedelta(d['t_within'], unit='s'))
+          pd.to_timedelta(d['t_center'], unit='s'))
 d['nicetime'] = d.t.dt.tz_convert(timezone).dt.strftime('%A %d.%m. %H:%M') # For output
 d['utctime'] = d.t.dt.strftime('%Y-%m-%d %H:%M UTC') # For clip metadata
     
@@ -125,7 +125,7 @@ if args.full_only:
 
 # {'start': 2533.5, 'end': 2536.5, 'species': 'Strix aluco', 'cname': 'lehtopöllö',
 #  'p': 0.5075, 'file': 'res/res-home-20221225_064256.txt',
-#  't_within': 2535.0, 't': Timestamp('2022-12-25 07:25:11+0000', tz='UTC'),
+#  't_center': 2535.0, 't': Timestamp('2022-12-25 07:25:11+0000', tz='UTC'),
 #  'nicetime': 'Sunday 25.12. 09:25'}
 
 # We need to read ls() from the raw dir, then do the re match thing below
@@ -152,30 +152,39 @@ else:
     d_samples['file_ptrn'] = [re.search(date_ptrn, file).group(1) for file in d_samples['file']]
     p2raw   = { re.search(date_ptrn, file).group(1) : file for file in glob.glob(f'{raw_dir}/*') }
 
-    def soxline(r):
+    for idx, r in d_samples.iterrows():
         file_ptrn = r['file_ptrn']
         orig = p2raw.get(r['file_ptrn'])
         if orig:
+            tmax = float(subprocess.run(['soxi', '-D', orig],
+                                                 stdout=subprocess.PIPE, text=True).stdout)
             start, p, species, utctime = r['start'], r['p'], r['species'], r['utctime']
             # Comment goes to the file as metadata.
+            t_center = r['t_center']
+            date = file_ptrn #.split('_')[0]
             comment = (f"species={species}, confidence={p}, time={utctime}, "
-                       f"orig_file={orig}, start={start}, confidence={p}")
-            t_within = r['t_within']
-            date = file_ptrn.split('_')[0]
-            hsh = hashlib.md5(comment.encode('latin1')).hexdigest()[:5]
+                       f"orig_file={orig}, t_center={t_center}")
+            hsh = hashlib.md5(comment.encode('latin1')).hexdigest()[:4]
             clip = f"{clip_dir}/{r['cname']}_{date}_{hsh}.{output_type}"
-            return ['sox', orig, '--comment', comment, clip, 
-                    'trim', str(t_within - output_duration//2), str(output_duration),
-                    'highpass', str(50), 'norm', str(-4)]
+            th = output_duration / 2 
+            t0, pd0 = (virt0, 0) if (virt0 := t_center - th) > 0 else (0, -virt0) 
+            t1, pd1 = (virt1, 0) if (virt1 := t_center + th) < tmax else (tmax, virt1 - tmax)
+            print(f"Clipping {orig} to {clip}, @{t_center} pads {pd0} {pd1}")
+            sox1 = subprocess.Popen(['sox', orig, 
+                                     '-t', 'flac', '-', # output (stdout)
+                                     'trim', str(t0), str(t1-t0),
+                                     'highpass', str(50),
+                                     'norm', str(-4)],
+                                    stdout=subprocess.PIPE)
+            sox2 = subprocess.run(['sox', '-', 
+                                   '--comment', comment, # add metadata
+                                   clip, # output file (final)
+                                   'pad', str(pd0), str(pd1)],
+                                  stdin=sox1.stdout)
         else:
-            None
-    for idx, row in d_samples.iterrows():
-        line = soxline(dict(row))
-        if line is None:
             print("No raw match for", row['file'])
-        else:
-            print(' '.join(line[:2]), '...')
-            subprocess.run(line)
+
+
             
         
 
