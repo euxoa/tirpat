@@ -42,21 +42,27 @@ parser.add_argument("-l", "--minlag", type=float, default=2.0,
                     help="seconds, min between adjacent included rows (default: 2.0)")
 parser.add_argument("-n", "--nrows", type=int, default=3,
                     help="max number of rows per species (default: 3)")
+parser.add_argument('--raw', action=argparse.BooleanOptionalAction,
+                    help="raw observations, skips ordering, argmax(p) logic and max number of lines")
 parser.add_argument('--full-only', action=argparse.BooleanOptionalAction,
                     help="require max number (nrows) of lines for species")
 parser.add_argument('--nonfull-only', action=argparse.BooleanOptionalAction,
                     help="require less than max number (nrows) of lines for species")
 parser.add_argument('--species',
                     help="species regex to filter with")
-parser.add_argument("input_files", nargs="+",
-                    help="input files")
+parser.add_argument("--output-duration", type=float, default=20,
+                    help="length of clips, in seconds")
+parser.add_argument("--output-type", type=str, default='flac',
+                    help="type of clips, as recognized by sox")
 parser.add_argument("--timezone", type=str, default=time.tzname[0],
-                    help="time zone for species lists (not files, UTC metadata there)")
+                    help="time zone for species lists and clip names (UTC in clip metadata)")
 parser.add_argument('--clip', nargs=2, help='dir of orig. audio and dir of clips')
 parser.add_argument('--clap', action=argparse.BooleanOptionalAction,
                     help="clip, assuming origs are in 'raw' and clips are in 'clips'")
 parser.add_argument('--counts', action=argparse.BooleanOptionalAction,
                     help="accepted obs counts per species")
+parser.add_argument("input_files", nargs="+",
+                    help="input files")
 
 args = parser.parse_args()
 
@@ -65,11 +71,10 @@ minlag = args.minlag
 nrows = args.nrows
 sp_rex = args.species
 input_files = args.input_files
+output_type = args.output_type
+output_duration = args.output_duration
 timezone = args.timezone
 
-
-output_type = "flac"
-output_duration = 20
 
 if args.clap:
     do_clip, raw_dir, clip_dir = True, "raw", "clips"
@@ -128,10 +133,13 @@ d_spaced = d.groupby('species', group_keys=True).\
 # Counts (maybe not needed)
 d_counts = d_spaced.groupby('species', as_index=False).size().rename(columns={'size':'count'})
 
+if args.raw:
+    d_samples = d
+else:
 # Head, or only the best rows.
-d_samples = d_spaced.groupby('species', group_keys=True).\
-    apply(lambda x: x.sort_values('p', ascending=False).head(nrows)).\
-    reset_index(drop=True)
+    d_samples = d_spaced.groupby('species', group_keys=True).\
+        apply(lambda x: x.sort_values('p', ascending=False).head(nrows)).\
+        reset_index(drop=True)
 
 if args.full_only:
     d_samples = d_samples.groupby('species').filter(lambda x: x.shape[0] == nrows)
