@@ -98,9 +98,10 @@ def deduplicate2(d, var, threshold, var_max):
     Find rows in d that are closer to each other than threshold by values of var,
     then select the row highest in value of var_max in each 'adjacency group'.
     """
-    return d.sort_values(var).\
-        groupby((~d[var].diff(periods=1).abs().lt(threshold).values).cumsum()).\
-        apply(lambda x: x.loc[x[var_max].idxmax()])
+    r = d.sort_values(var).\
+        groupby((~d[var].diff(periods=1).abs().lt(threshold).values).cumsum(), group_keys=True).\
+        apply(lambda x: x.nlargest(1, var_max))#x.loc[x[var_max].idxmax()])
+    return r
 
 d = pd.concat([pd.read_csv(f, header=0).assign(file=f)
                for f in input_files]) # was glob.glob(res/res-*.txt")
