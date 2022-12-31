@@ -1,5 +1,6 @@
 import glob, re, argparse, hashlib, subprocess, time
 import pandas as pd
+import polars as pl
 
 dscr="""
 A script for displaying summaries of BirdNET-Analyzer observations from a buch of 
@@ -48,7 +49,7 @@ parser.add_argument('--full-only', action=argparse.BooleanOptionalAction,
                     help="require max number (nrows) of lines for species")
 parser.add_argument('--nonfull-only', action=argparse.BooleanOptionalAction,
                     help="require less than max number (nrows) of lines for species")
-parser.add_argument('--species',
+parser.add_argument('--species', type=str, default="",
                     help="species regex to filter with")
 parser.add_argument("--output-duration", type=float, default=20,
                     help="length of clips, in seconds")
@@ -103,17 +104,29 @@ def deduplicate2(d, var, threshold, var_max):
         apply(lambda x: x.nlargest(1, var_max))#x.loc[x[var_max].idxmax()])
     return r
 
-d = pd.concat([pd.read_csv(f, header=0).assign(file=f)
-               for f in input_files]) # was glob.glob(res/res-*.txt")
+orig_names = ['Start (s)', 'End (s)', 'Scientific name', 'Common name', 'Confidence']
+new_names = ['start', 'end', 'species', 'cname', 'p']
+col_types = (pl.Float32, pl.Float32, pl.Utf8, pl.Utf8, pl.Float32)
 
-d.rename(columns = {"Scientific name" : "species",
-                    "Common name" : "cname",
-                    "Start (s)" :"start", "End (s)" : "end", "Confidence" : "p"}, inplace=True)
+d=(pl.concat([(pl.scan_csv(ifname, dtypes=dict(zip(orig_names, col_types))).
+               with_column(pl.lit(ifname).alias('file'))) # Add filename as a column
+             for ifname in input_files]).
+            rename(dict(zip(orig_names, new_names))).
+            # Filter by confidencce, and maybe by species
+            filter((pl.col('p') > pmin) & 
+                    (pl.col('cname').str.contains(sp_rex) | 
+                     pl.col('species').str.contains(sp_rex))))
 
-# Filter by confidencce, and maybe by species
-d = d.loc[d['p'] > pmin]
-if sp_rex is not None:
-    d = d.loc[d.species.str.contains(sp_rex) | d.cname.str.contains(sp_rex) ]
+d = d.collect().to_pandas()
+
+# This needs a regex first I think
+# d['file'].str.strptime(fmt = "%Y%m%d_%H%M%S", datatype=pl.Datetime, strict=False)
+# This works, but use a better regex
+# d['file'].str.extract(r'([0-9]+_[0-9]+)', 1).str.strptime(fmt = "%Y%m%d_%H%M%S", datatype=pl.Datetime)
+# Also, UTC?
+# https://stackoverflow.com/questions/72750043/add-timedelta-to-a-date-column-above-weeks
+
+if False: print("in pandas now")
 
 d['t_center'] = (d['start'] + d['end'])/2
 d['t'] = (pd.to_datetime(d.file, format="%Y%m%d_%H%M%S", exact=False, utc=True) +
@@ -141,6 +154,7 @@ else:
     d_samples = d_spaced.groupby('species', group_keys=True).\
         apply(lambda x: x.sort_values('p', ascending=False).head(nrows)).\
         reset_index(drop=True)
+
 
 if args.full_only:
     d_samples = d_samples.groupby('species').filter(lambda x: x.shape[0] == nrows)
@@ -197,7 +211,7 @@ else:
                                    'pad', str(pd0), str(pd1)],
                                   stdin=sox1.stdout)
         else:
-            print("No raw match for", row['file'])
+            print("No raw match for", r['file'])
 
 
             
