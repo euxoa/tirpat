@@ -1,15 +1,14 @@
 #!/bin/bash
 
-file_prefix=home
+file_prefix=mokki
 ba=BirdNET-Analyzer
 raw_dir=raw
 res_dir=res
 duration=3600
 
 get_current_qweek() {
-    month=$(date +%m)
-    year=$(date +%Y)
-    day_of_month=$(date +%d)
+    month=$(date +%-m)
+    day_of_month=$(date +%-d)
 
     # Calculate the number of days in the current month
     # days_in_month=$(date --date="$year-$month-01 + 1 month - 1 day" +%d)
@@ -32,14 +31,14 @@ do
     # at a sample rate of 48000 Hz (--format=S24_3LE -r 48000)
     # in stereo (-c 2)
     # and pipe the output to the sox command
-    arecord -D hw:2,0 -d $duration -r 48000 --format=S24_3LE -c 2 - |
+    arecord -D hw:1,0 -d $duration -r 48000 --format=S24_3LE -c 2 - |
 
     # Convert the audio from the pipe to a mono FLAC file (-c 1) and save.
     sox -t wav - -c 1 -r 48000 -t flac $raw_dir/$file_basename.flac &&
 
     # Run Birdnet Analyzer in the background
     (python3 $ba/analyze.py --i $raw_dir/$file_basename.flac --o res/res-$file_basename.txt \
-        --lat 60.2 --lon 24.7 --week $qweek --overlap 1.5 --locale fi --rtype csv --threads 1 & )
+        --lat 61.46 --lon 29.39 --week $qweek --overlap 1.5 --locale fi --rtype csv --threads 1 & )
 done
 
     
