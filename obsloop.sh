@@ -20,17 +20,22 @@ get_current_qweek() {
     echo "$current_qweek"
 }
 
-qweek=$(get_current_qweek)
 
 while true
 do
     # Get the current UTC time to use in file names
     file_basename=$file_prefix-$(date -u +"%Y%m%d_%H%M%S")
+    # ... and week as understood by BirdNet (48 weeks per year)
+    qweek=$(get_current_qweek)
 
+    # This is for future extension
+    # for i in {4..1}; do echo mv -f "file$i.txt" "file$(($i+1)).txt"; done
+    
     # Record audio for one hour (-d 3600) using the Røde USB audio interface (-D hw:2,0)
     # at a sample rate of 48000 Hz (--format=S24_3LE -r 48000)
     # in stereo (-c 2)
     # and pipe the output to the sox command
+
     arecord -D hw:1,0 -d $duration -r 48000 --format=S24_3LE -c 2 - |
 
     # Convert the audio from the pipe to a mono FLAC file (-c 1) and save.
