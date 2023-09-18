@@ -28,23 +28,24 @@ do
     # ... and week as understood by BirdNet (48 weeks per year)
     qweek=$(get_current_qweek)
 
-    # This is to rotate stereo files
+    # Rotate stereo files
+    # find ./stereo -name "*.flac" -type f -mtime +1 -exec rm -f {} \;
     for i in {24..1}
     do
-	mv -f "stereo/file$i.txt" "stereo/file$(($i+1)).txt" > /dev/null 2>&1
+	mv -f "stereo/file$i.flac" "stereo/file$(($i+1)).flac" > /dev/null 2>&1
     done
     
-    # Record audio for one hour (-d 3600) using the Røde USB audio interface (-D hw:2,0)
+    # Record audio for one hour (-d 3600) using the Røde USB audio interface (-D hw:x,x)
     # at a sample rate of 48000 Hz (--format=S24_3LE -r 48000)
     # in stereo (-c 2)
-    # and pipe the output to the sox command
+    # and pipe ...
     arecord -D hw:1,0 -d $duration -r 48000 --format=S24_3LE -c 2 - |
 
     # Save a stereo version
-    tee >(sox -t wav - -c 2 -r 48000 -t flac stereo/file1.flac norm) |
+    tee >(sox -t wav - -c 2 -r 48000 -t flac stereo/file1.flac highpass 10 norm -3) |
 
     # Convert the audio from the pipe to a mono FLAC file (-c 1) and save.
-    sox -t wav - -c 1 -r 48000 -t flac $raw_dir/$file_basename.flac &&
+    sox -t wav - -c 1 -r 48000 -t flac $raw_dir/$file_basename.flac highpass 10 &&
 
     # Run Birdnet Analyzer in the background
     (python3 $ba/analyze.py --i $raw_dir/$file_basename.flac --o res/res-$file_basename.txt \
