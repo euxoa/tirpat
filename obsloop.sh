@@ -20,6 +20,8 @@ get_current_qweek() {
     echo "$current_qweek"
 }
 
+usb_mic=$(arecord -l | grep AI-Micro | sed -n -e 's/^.*card \([0-9]\):.*device \([0-9]\):.*$/hw:\1,\2/p')
+echo "Going to tell arecord that the mic is at $usb_mic"
 
 while true
 do
@@ -39,7 +41,7 @@ do
     # at a sample rate of 48000 Hz (--format=S24_3LE -r 48000)
     # in stereo (-c 2)
     # and pipe ...
-    arecord -D hw:1,0 -d $duration -r 48000 --format=S24_3LE -c 2 - |
+    arecord -D $usb_mic -d $duration -r 48000 --format=S24_3LE -c 2 - |
 
     # Save a stereo version
     tee >(sox -t wav - -c 2 -r 48000 -t flac stereo/file1.flac highpass 10 norm -3) |
