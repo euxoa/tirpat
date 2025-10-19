@@ -1,0 +1,14 @@
+[Unit]
+Description=OBS Loop Script
+After=network.target
+
+[Service]
+ExecStart=/bin/bash /home/pi/tirpat/obsloop.sh
+User=pi
+WorkingDirectory=/home/pi/tirpat
+Restart=always
+#StandardOutput=append:/home/pi/tirpat/obsloop.log
+#StandardError=append:/home/pi/tirpat/obsloop.err
+
+[Install]
+WantedBy=multi-user.target
