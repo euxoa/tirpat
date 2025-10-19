@@ -1,4 +1,4 @@
-import glob, re, argparse, hashlib, subprocess, time
+import glob, re, argparse, hashlib, subprocess, time, sys
 import pandas as pd
 import polars as pl
 
@@ -45,6 +45,8 @@ parser.add_argument("-n", "--nrows", type=int, default=3,
                     help="max number of rows per species (default: 3)")
 parser.add_argument('--raw', action=argparse.BooleanOptionalAction,
                     help="raw observations, skips ordering, argmax(p) logic and max number of lines")
+parser.add_argument('--debug', action=argparse.BooleanOptionalAction,
+                    help="turn on some extra output")
 parser.add_argument('--full-only', action=argparse.BooleanOptionalAction,
                     help="require max number (nrows) of lines for species")
 parser.add_argument('--nonfull-only', action=argparse.BooleanOptionalAction,
@@ -99,17 +101,32 @@ def deduplicate2(d, var, threshold, var_max):
     Find rows in d that are closer to each other than threshold by values of var,
     then select the row highest in value of var_max in each 'adjacency group'.
     """
-    r = d.sort_values(var).\
-        groupby((~d[var].diff(periods=1).abs().lt(threshold).values).cumsum(), group_keys=True).\
+    d = d.sort_values(var)
+    r = d.groupby((~d[var].diff(periods=1).abs().lt(threshold).values).cumsum(), group_keys=True).\
         apply(lambda x: x.nlargest(1, var_max))#x.loc[x[var_max].idxmax()])
     return r
+
+def deduplicate3(d, var, threshold, var_max):
+    """
+    Find rows in d that are closer to each other than threshold by values of var,
+    then select the row highest in value of var_max in each 'adjacency group'.
+    """
+    d = pl.from_pandas(d)
+    print(d.sort(var).d[var].diff())
+    print(((~d[var].diff().abs().apply(lambda x: x<threshold)).fill_null(True)).
+                 cumsum())
+    r = (d.sort(var).
+         groupby(((~d[var].diff().abs().apply(lambda x: x<threshold)).fill_null(True)).
+                 cumsum()).
+         apply(lambda x: x[x[var_max] == x[var_max].max()]))
+    return r.to_pandas()
 
 orig_names = ['Start (s)', 'End (s)', 'Scientific name', 'Common name', 'Confidence']
 new_names = ['start', 'end', 'species', 'cname', 'p']
 col_types = (pl.Float32, pl.Float32, pl.Utf8, pl.Utf8, pl.Float32)
 
-d=(pl.concat([(pl.scan_csv(ifname, dtypes=dict(zip(orig_names, col_types))).
-               with_column(pl.lit(ifname).alias('file'))) # Add filename as a column
+d=(pl.concat([(pl.scan_csv(ifname, schema_overrides=dict(zip(orig_names, col_types))).
+               with_columns(pl.lit(ifname).alias('file'))) # Add filename as a column
              for ifname in input_files]).
             rename(dict(zip(orig_names, new_names))).
             # Filter by confidencce, and maybe by species
@@ -117,6 +134,7 @@ d=(pl.concat([(pl.scan_csv(ifname, dtypes=dict(zip(orig_names, col_types))).
                     (pl.col('cname').str.contains(sp_rex) | 
                      pl.col('species').str.contains(sp_rex))))
 
+if args.debug: sys.stderr.write("Going to pandas.\n")
 d = d.collect().to_pandas()
 
 # This needs a regex first I think
@@ -125,9 +143,11 @@ d = d.collect().to_pandas()
 # d['file'].str.extract(r'([0-9]+_[0-9]+)', 1).str.strptime(fmt = "%Y%m%d_%H%M%S", datatype=pl.Datetime)
 # Also, UTC?
 # https://stackoverflow.com/questions/72750043/add-timedelta-to-a-date-column-above-weeks
+# The UTC, if nothing else, add that to the string before strptime.
+# A good regex: 20\d\d(0[1-9]|1[012])(0[1-9]|[12]\d|3[01])_([01]\d|2[0-3])([0-5]\d)([0-5]\d)
 
-if False: print("in pandas now")
 
+if args.debug: sys.stderr.write("Calculate new time fields..\n")
 d['t_center'] = (d['start'] + d['end'])/2
 d['t'] = (pd.to_datetime(d.file, format="%Y%m%d_%H%M%S", exact=False, utc=True) +
           pd.to_timedelta(d['t_center'], unit='s'))
@@ -140,31 +160,34 @@ d['t'] = (pd.to_datetime(d.file, format="%Y%m%d_%H%M%S", exact=False, utc=True) 
 # you don't need to reset the index afterwards.
 
 # So, first take only trustworthy lines, and remove adjacent obs (by selecting argmax(p) of those)
-d_spaced = d.groupby('species', group_keys=True).\
+if args.debug: sys.stderr.write("The sparsening thing.\n")
+d_spaced = d.groupby('species', group_keys=True)[d.columns].\
           apply(lambda x: deduplicate2(x, 't', pd.to_timedelta(minlag, unit='s'), 'p')).\
           reset_index(drop=True)
 
 # Counts (maybe not needed)
+if args.debug: sys.stderr.write("And counts..\n")
 d_counts = d_spaced.groupby('species', as_index=False).size().rename(columns={'size':'count'})
 
 if args.raw:
     d_samples = d
 else:
 # Head, or only the best rows.
-    d_samples = d_spaced.groupby('species', group_keys=True).\
+    d_samples = d_spaced.groupby('species', group_keys=True)[d.columns].\
         apply(lambda x: x.sort_values('p', ascending=False).head(nrows)).\
         reset_index(drop=True)
-
 
 if args.full_only:
     d_samples = d_samples.groupby('species').filter(lambda x: x.shape[0] == nrows)
 if args.nonfull_only:
     d_samples = d_samples.groupby('species').filter(lambda x: x.shape[0] < nrows)
 
+if args.debug: sys.stderr.write("And more time fields..\n")
 d_samples['nicetime'] = d_samples.t.dt.tz_convert(timezone).dt.strftime('%A %d.%m. %H:%M') # For output
 d_samples['utctime'] = d_samples.t.dt.strftime('%Y-%m-%d %H:%M UTC') # For clip metadata
 d_samples['nicetime2'] = d_samples.t.dt.tz_convert(timezone).dt.strftime('%Y%m%d_%H%M') # For clip names
 
+if args.debug: sys.stderr.write("And output, finally.\n")
 if not do_clip:
     # Just show the obs list or counts
     if args.counts:
@@ -178,9 +201,11 @@ if not do_clip:
 else:
     # Make clips
     date_ptrn = re.compile(r"(\d{8}_\d{6})")
+    # FIXME: this crashes if a file doesn't match the pattern (like if there is test.wav)
     d_samples['file_ptrn'] = [re.search(date_ptrn, file).group(1) for file in d_samples['file']]
     p2raw   = { re.search(date_ptrn, file).group(1) : file for file in glob.glob(f'{raw_dir}/*') }
-
+    
+    
     for idx, r in d_samples.iterrows():
         file_ptrn = r['file_ptrn']
         orig = p2raw.get(r['file_ptrn'])
