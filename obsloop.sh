@@ -41,15 +41,38 @@ do
     # at a sample rate of 48000 Hz (--format=S24_3LE -r 48000)
     # in stereo (-c 2)
     # and pipe ...
-    arecord -D $usb_mic -d $duration -r 48000 --format=S24_3LE -c 2 - |
+    if arecord -D "$usb_mic" -d "$duration" -r 48000 --format=S24_3LE -c 2 - |
 
     # Save a stereo version
-    tee >(sox -t wav - -c 2 -r 48000 -t flac stereo/file1.flac highpass 10 norm -3) |
+       tee >(sox -t wav - -c 2 -r 48000 -t flac stereo/file1.flac highpass 10 norm -3) |
 
     # Convert the audio from the pipe to a mono FLAC file (-c 1) and save.
-    sox -t wav - -c 1 -r 48000 -t flac $raw_dir/$file_basename.flac highpass 10 &&
+       sox -t wav - -c 1 -r 48000 -t flac "$raw_dir/$file_basename.flac" highpass 10
+    then
 
-    # Run Birdnet Analyzer in the background
-    (python3 $ba/analyze.py --i $raw_dir/$file_basename.flac --o res/res-$file_basename.txt \
-         --lat 61.46 --lon 29.39 --week $qweek --overlap 1.5 --locale fi --rtype csv --threads 1 & )
+    # Run BirdNET analyzer and ingest results into SQLite in the background
+        (
+            if python3 "$ba/analyze.py" \
+                --i "$raw_dir/$file_basename.flac" \
+                --o "$res_dir/res-$file_basename.txt" \
+                --lat 61.46 --lon 29.39 \
+                --week "$qweek" \
+                --overlap 1.5 \
+                --locale fi \
+                --rtype csv \
+                --threads 1; then
+                .venv/bin/python ingest_csv.py \
+                    --db birdnet.sqlite \
+                    --default-duration "$duration" \
+                    --raw-dir "$raw_dir" \
+                    "$res_dir/res-$file_basename.txt" \
+                || logger -t obsloop "ingest failed for $file_basename"
+            else
+                logger -t obsloop "analysis failed for $file_basename"
+            fi
+        ) &
+    else
+        logger -t obsloop "recording pipeline failed for $file_basename"
+        sleep 5
+    fi
 done
