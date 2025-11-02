@@ -11,6 +11,7 @@
 - Each BirdNET CSV row carries both the absolute recording start (encoded in the filename) and the offset within that recording. We will persist both: `ts_utc` (absolute detection start in epoch seconds) and `offset_start_s` (relative to the recording), plus `dur_s`. This keeps clip generation straightforward and avoids recomputing offsets repeatedly.
 - A `recordings` table captures per-file metadata (station, start time, Q-week, path hints). Observations reference recordings via foreign key, so we can track archival state without duplicating filenames in every detection row.
 - `model_version` lives on the observation; it is looked up during import via `model-update-times.txt`. If later we change filters or pipeline parameters, we can extend the schema with a `pipeline_version` column without disturbing the core tables.
+- BirdNET result filenames are stamped in UTC (`obsloop.sh` calls `date -u`). Importers should treat the basename timestamps as UTC and only convert to Europe/Helsinki (or other station timezone) after parsing.
 
 ### SQL Definition
 ```sql

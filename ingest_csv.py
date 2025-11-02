@@ -159,14 +159,10 @@ def make_timezone(name: str):
     return tzinfo
 
 
-def parse_local_timestamp(stamp: str, tzinfo) -> datetime:
+def parse_utc_timestamp(stamp: str) -> datetime:
+    """Parse the UTC timestamp encoded in BirdNET result filenames."""
     naive = datetime.strptime(stamp, TIMESTAMP_FORMAT)
-    zone_label = getattr(tzinfo, "zone", None) or getattr(tzinfo, "key", None) or str(tzinfo)
-    if not tz.datetime_exists(naive, tzinfo):
-        raise ValueError(f"Local time {stamp} does not exist in timezone {zone_label}")
-    if tz.datetime_ambiguous(naive, tzinfo):
-        raise ValueError(f"Local time {stamp} is ambiguous in timezone {zone_label} (DST overlap)")
-    return naive.replace(tzinfo=tzinfo)
+    return naive.replace(tzinfo=timezone.utc)
 
 
 def compute_qweek(local_dt: datetime) -> int:
@@ -276,8 +272,9 @@ def ingest_file(
     station, stamp = parse_station_and_stamp(path)
     if station_override:
         station = station_override
-    local_dt = parse_local_timestamp(stamp, tzinfo)
-    ts_start_utc = int(local_dt.astimezone(timezone.utc).timestamp())
+    utc_dt = parse_utc_timestamp(stamp)
+    local_dt = utc_dt.astimezone(tzinfo)
+    ts_start_utc = int(utc_dt.timestamp())
     qweek = compute_qweek(local_dt)
     raw_path = raw_dir / f"{station}-{stamp}.flac"
 

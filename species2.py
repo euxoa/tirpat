@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import os
 import re
 import sqlite3
 import subprocess
@@ -35,6 +36,20 @@ Examples:
    # Produce clips like the original helper
    python species2.py -l 60 -n 5 --full-only --clips raw clips-out
 """
+
+
+def detect_local_timezone() -> str:
+    """Best-effort local timezone guess (prefers Olson database names)."""
+    tz_env = os.environ.get("TZ")
+    if tz_env:
+        return tz_env
+    try:
+        is_dst = time.localtime().tm_isdst
+    except (OSError, AttributeError):
+        is_dst = -1
+    idx = 1 if is_dst == 1 and len(time.tzname) > 1 else 0
+    candidate = time.tzname[idx] if time.tzname else None
+    return candidate or "UTC"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -75,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timezone",
         type=str,
-        default=time.tzname[0],
+        default=detect_local_timezone(),
         help="time zone for species lists and clip names (UTC in clip metadata)",
     )
     parser.add_argument("--clip", nargs=2, metavar=("RAW_DIR", "CLIP_DIR"), help="dir of orig. audio and dir of clips")
