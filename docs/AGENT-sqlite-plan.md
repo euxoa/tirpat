@@ -1,15 +1,37 @@
-# SQLite Migration Notes
+# SQLite Migration Plan
 
-## Snapshot Of Current Workflow
-- BirdNET analyzer drops CSV result files in `res/` with per-detection columns: start/end offsets (s), scientific/common names, confidence.
-- Typical inspection commands (from `~/.bash_history`):  
-  - `.venv/bin/python species.py $(ls res/* | tail -24)  -p .80 --counts`  
-  - `.venv/bin/python species.py $(ls res/* | tail -3000)  -p .90 --raw --species harmaahaikara | less`  
-  These rely on quick glob/tail selection of recent files, filtering by species regex, adjusting confidence thresholds, and occasionally piping to `less`.
-- `species.py` uses Polars→Pandas to lazily read the selected CSVs, deduplicate detections, format relative/absolute times, and optionally produce clips.
+## Objectives
+- Replace the CSV-only results workflow with a single SQLite database that preserves all information needed for review, clipping, and analytics.
+- Align the schema with existing artifacts (`res/*`, `raw/*`, `obsloop.sh`) so we can import historical detections and keep the recording loop running unchanged while we transition.
+- Stage the work to minimise downtime: build the database, backfill old observations, teach the pipeline to dual-write, then migrate the tooling.
 
-## Review Of Proposed Schema
+## Schema Overview
+
+### Design Notes
+- Each BirdNET CSV row carries both the absolute recording start (encoded in the filename) and the offset within that recording. We will persist both: `ts_utc` (absolute detection start in epoch seconds) and `offset_start_s` (relative to the recording), plus `dur_s`. This keeps clip generation straightforward and avoids recomputing offsets repeatedly.
+- A `recordings` table captures per-file metadata (station, start time, Q-week, path hints). Observations reference recordings via foreign key, so we can track archival state without duplicating filenames in every detection row.
+- `model_version` lives on the observation; it is looked up during import via `model-update-times.txt`. If later we change filters or pipeline parameters, we can extend the schema with a `pipeline_version` column without disturbing the core tables.
+
+### SQL Definition
 ```sql
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE stations (
+  station_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL
+);
+
+CREATE TABLE recordings (
+  recording_id INTEGER PRIMARY KEY,
+  station_id TEXT NOT NULL REFERENCES stations(station_id),
+  file_basename TEXT NOT NULL UNIQUE,        -- e.g. res-mokki-20240601_030000.txt
+  ts_start_utc INTEGER NOT NULL,             -- epoch seconds, hour-aligned
+  duration_s REAL NOT NULL,
+  qweek INTEGER NOT NULL,                    -- custom 48-week scheme from obsloop.sh
+  channel_count INTEGER NOT NULL DEFAULT 1,
+  archived_at INTEGER                        -- epoch seconds when raw audio moved off-device
+);
+
 CREATE TABLE species (
   species_id INTEGER PRIMARY KEY,
   sci_name TEXT NOT NULL UNIQUE,
@@ -17,50 +39,57 @@ CREATE TABLE species (
 );
 
 CREATE TABLE detections (
-  id INTEGER PRIMARY KEY,
-  station_id TEXT NOT NULL,
-  ts_utc INTEGER NOT NULL,      -- epoch seconds
-  dur_s REAL NOT NULL,
-  species_id INTEGER NOT NULL REFERENCES species(species_id),
+  detection_id INTEGER PRIMARY KEY,
+  recording_id INTEGER NOT NULL REFERENCES recordings(recording_id) ON DELETE CASCADE,
+  ts_utc INTEGER NOT NULL,                   -- absolute detection start (epoch seconds)
+  offset_start_s REAL NOT NULL,              -- Start (s) from BirdNET CSV
+  dur_s REAL NOT NULL,                       -- End - Start from CSV
   confidence REAL NOT NULL,
-  file_hint TEXT,
-  model_version TEXT,
-  UNIQUE (station_id, ts_utc, dur_s, species_id, file_hint) ON CONFLICT IGNORE
+  species_id INTEGER NOT NULL REFERENCES species(species_id),
+  model_version TEXT NOT NULL,
+  clip_hint TEXT,                            -- optional: existing clip file, if any
+  notes TEXT,
+  UNIQUE (recording_id, offset_start_s, species_id, model_version) ON CONFLICT IGNORE
 );
 ```
 
-- **Missing offsets:** CSV rows carry `Start (s)` / `End (s)`. Storing only `dur_s` loses the offset that makes each detection unique and reconstructable. Suggest keeping at least `offset_start_s` (float) and optionally `offset_end_s` or `offset_center_s`, so we can reverse-engineer clip centers, deduplicate correctly, and export clips later. These offsets originate from the analyzer output driven by `obsloop.sh`, so keep their original semantics intact.
-- **Meaning of `ts_utc`:** `obsloop.sh` timestamps each filename with the UTC start of the hour-long recording. Use that as `file_start_utc`, and compute detection timestamps as `file_start_utc + offset_start_s`. If you store the absolute detection start in `ts_utc`, keep the offset columns as well for clip generation and integrity checks.
-- **File-level metadata:** Consider a `recordings` table (`station_id`, `file_start_utc`, `file_path`, `qweek`, `duration_s`). That keeps `detections` lean and lets you track when raw audio files are archived or pruned.
-- **Station ID cardinality:** If you keep one station (`mokki`), an index on `station_id` adds little. A partial composite index on `(station_id, ts_utc)` remains useful if you add other stations later.
-- **Model version and pipeline:** Keeping `model_version` is helpful when updating BirdNET. `model-update-times.txt` lists changes: plan how to populate the column (e.g. lookup by timestamp during import). Add a `pipeline_version` or `analysis_hash` if you tweak filters or the analyzer parameters.
+### Index Strategy
+- `CREATE INDEX detections_ts_idx ON detections(ts_utc);` – fast chronologically bounded queries.
+- `CREATE INDEX detections_species_idx ON detections(species_id, ts_utc DESC);` – supports species lookups and recent history.
+- `CREATE INDEX detections_confidence_idx ON detections(confidence DESC);` – optional, for high-confidence filtering; monitor before adding.
+- `CREATE INDEX recordings_station_time_idx ON recordings(station_id, ts_start_utc DESC);` – latest recordings per station.
+- No standalone index on `station_id` inside `detections`; the foreign key plus composite indexes cover the expected queries.
 
-## Query Parity With Today’s Usage
-- **Latest batches:** `SELECT * FROM detections WHERE station_id='mokki' ORDER BY ts_utc DESC LIMIT 24;`
-- **Species regex analogue:** SQLite lacks native regex; you’d need `REGEXP` extension or filter in Python. If you rely on regex (`--species mustalintu`), plan for a user-defined function or a LIKE-based fallback.
-- **Confidence threshold & counts:**  
-  `SELECT species_id, COUNT(*) FROM detections WHERE confidence >= 0.80 AND ts_utc >= strftime('%s','now','-24 hours') GROUP BY species_id ORDER BY COUNT(*) DESC;`
-- **Clip production:** Requires offsets. With `offset_start_s`, you can reconstruct `nicetime` and generate filenames the same way `species.py` does.
+## Migration Phases
 
-## Data Ingestion Considerations
-- **Pipeline hook:** After each analyzer run, append detections into SQLite before (or instead of) writing CSV. Options:  
-  1. Modify `obsloop.sh` to call a small Python script that parses the fresh CSV and inserts rows.  
-  2. Replace CSV emission with direct DB insert in `analyze.py` (requires patching upstream).  
-  3. Run a periodic “harvester” that watches `res/` for new files and imports them, then moves archived CSVs elsewhere.
-- **Offsets during import:** During ingestion, read the CSV `Start (s)` / `End (s)` values and store them as `offset_start_s` / `offset_end_s`. Combine with the file basename (UTC hour from `obsloop.sh`) to reconstruct absolute detection timestamps.
-- **Model version capture:** When ingesting, join each detection with the active analyzer model version using `model-update-times.txt` (e.g. pick the latest entry with timestamp ≤ file start) and populate `detections.model_version`.
-- **Idempotency:** Keep `file_hint` (e.g., basename `res-mokki-YYYYmmdd_hhmmss.txt`) plus offsets in the unique constraint so re-imports don’t duplicate rows.
-- **Archival sync:** When raw audio is moved off-device, update a `recordings.archived_at` column or maintain a sidecar table so you know which detections still have accessible audio.
+### Phase 1 – Database Creation
+- Generate the SQLite schema (SQL above) and seed the `stations` table (initially `mokki`).
+- Capture the schema in version control (SQL file and migration notes) and document how to initialise the DB on-device.
 
-## Tooling Impact
-- `species.py` would need a new SQLite code path (or a separate CLI) to avoid reading thousands of CSVs. Polars can query SQLite via `read_database_uri`, or you can use DuckDB with `sqlite_scan`.
-- Maintain the existing CSV workflow in parallel until the DB path is trusted—especially because on-device experimentation currently happens “in production.”
-- Wrap common queries (`latest`, `counts`, `species search`) in a helper script so you don’t memorize SQL, mirroring today’s flags.
+### Phase 2 – Historical Backfill
+- Write an ingestion script (`.venv/bin/python ingest_csv.py …`) that scans existing `res/*.txt` files, parses BirdNET columns, computes `ts_utc = recording.ts_start_utc + Start (s)`, and loads rows into the new tables.
+- During import identify or create the corresponding `recordings` row using the file basename, populate `duration_s` (60 or 3600 depending on loop config), and derive `qweek` using the current shell logic (reuse the 48-week helper from `obsloop.sh` so the numbers stay aligned).
+- Map species names to IDs; seed new species as they appear. Maintain a CSV→species table lookup cache to keep ingestion idempotent.
+- Backfill `model_version` by reading `model-update-times.txt` and selecting the version active at `ts_start_utc`.
+- Validate parity: compare counts per species/day between CSV and DB outputs for a few sample periods.
 
-## Pros And Trade-offs
-- **Pros:** Smaller on-device footprint than DuckDB; durable single-file database; simpler to rsync/backup; easy to expose via simple APIs; handles incremental updates well.
-- **Cons:** Lacks built-in regex/window functions without extensions; ad-hoc analytics (e.g. percentile over long time spans) are faster in Polars/DuckDB. You may still prefer Polars for exploratory crunching—export slices from SQLite into Polars DataFrames.
-- **Performance fit:** Raspberry Pi-class hardware handles SQLite inserts/queries comfortably at hourly cadence. Just ensure you index on the columns you filter by (`ts_utc`, `species_id`, `confidence`).
+### Phase 3 – Pipeline Dual-Write
+- Extend `obsloop.sh` (or a helper the service calls) to run the ingestion script immediately after each analyzer run. Keep CSV emission untouched for now.
+- Ensure the ingestion step is idempotent: if a restart reprocesses the latest file, the `UNIQUE` constraint prevents duplicates.
+- Add lightweight health logging (e.g., append to syslog or a daily summary file) so we notice ingestion failures quickly.
 
-## Recommendation
-SQLite is a solid upgrade for durable storage and quick retrieval, provided you amend the schema to retain detection offsets and either expose regex searches or accept LIKE-based filters. Plan the ingestion script and helper CLI first, test alongside existing `species.py` flows, then phase out bulk CSV reads once parity is proven. DuckDB/Polars remain valuable for heavy analysis, but SQLite as the authoritative store should work well for your operational workflow.
+### Phase 4 – Tooling Update
+- Teach `species.py` to read from SQLite when available: swap Polars CSV reads for SQL queries while keeping command-line switches (`--species`, `--counts`, `--clip`) behaving identically.
+- For regex searches, perform filtering in Python using compiled regex over the result set; document the change in CLI help.
+- Update clip generation to use `detections.offset_start_s` and `recordings.ts_start_utc` to compute the same nicenames as today.
+- Once parity is proven, optionally add maintenance utilities (e.g., vacuum, stats export) and consider retiring bulk CSV reads.
+
+## Operational Notes
+- Backups: include the SQLite file in the same rsync routine as `raw/` archives. Perform `VACUUM` after large backfills to keep file size controlled.
+- Future schema changes (e.g., storing background noise metrics) should follow a migration script pattern to keep the device in sync.
+- Keep the CSV pipeline for at least one full migration cycle so you can fall back if the database encounters corruption; phase-out can happen after several weeks of successful dual writes.
+
+## Open Follow-ups
+- Build a small regression checklist (counts over the last 24h, first/last detection timestamps, clip playback) to run after each phase.
+- Decide when to enforce foreign key checks during ingestion (`PRAGMA defer_foreign_keys = ON`) depending on batch size and performance on the Pi.
+- Evaluate whether to store additional recording metadata (gain, sample rate) once we touch `obsloop.sh`; the schema leaves room for new columns without breaking ingestion.
