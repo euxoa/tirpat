@@ -16,6 +16,46 @@ import pandas as pd
 
 DEFAULT_DB = "birdnet.sqlite"
 DEFAULT_RECENT_HOURS = 24.0
+DEFAULT_FAKES = "docs/FAKES.txt"
+
+
+def load_fakes(path: str) -> dict[str, tuple[str, str]]:
+    """Load fakes config. Returns {cname: (action, label)}."""
+    fakes: dict[str, tuple[str, str]] = {}
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return fakes
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        cname = parts[0].strip()
+        action = parts[1].strip() if len(parts) > 1 else "flag"
+        label = parts[2].strip() if len(parts) > 2 else ""
+        if action not in ("reinterpret", "rename", "flag"):
+            continue
+        fakes[cname] = (action, label)
+    return fakes
+
+
+def apply_fakes(df: pd.DataFrame, fakes: dict[str, tuple[str, str]]) -> pd.DataFrame:
+    """Rewrite cname column based on fakes rules."""
+    if not fakes or df.empty:
+        return df
+    df = df.copy()
+    for cname, (action, label) in fakes.items():
+        mask = df["cname"] == cname
+        if not mask.any():
+            continue
+        if action == "reinterpret":
+            df.loc[mask, "cname"] = f"[{label}]" if label else f"[{cname}?]"
+        elif action == "rename":
+            df.loc[mask, "cname"] = label if label else f"{cname}?"
+        elif action == "flag":
+            df.loc[mask, "cname"] = label if label else f"{cname}?"
+    return df
 
 
 DSCR = """
@@ -110,6 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="clip, assuming origs are in 'raw' and clips are in 'clips'",
     )
     parser.add_argument("--counts", action=argparse.BooleanOptionalAction, help="accepted obs counts per species")
+    parser.add_argument(
+        "--fakes", type=str, default=DEFAULT_FAKES, help=f"fakes config file (default: {DEFAULT_FAKES})"
+    )
+    parser.add_argument(
+        "--no-fakes", action="store_true", help="disable fakes rewriting"
+    )
     parser.add_argument(
         "input_patterns",
         nargs="*",
@@ -271,6 +317,13 @@ def main() -> None:
 
     if args.debug:
         sys.stderr.write(f"Fetched {len(detections)} detections.\n")
+
+    if not args.no_fakes:
+        fakes = load_fakes(args.fakes)
+        if fakes:
+            detections = apply_fakes(detections, fakes)
+            if args.debug:
+                sys.stderr.write(f"Applied {len(fakes)} fakes rules.\n")
 
     detections = detections.copy()
     detections["end"] = detections["start"] + detections["duration"]

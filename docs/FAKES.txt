@@ -1,13 +1,26 @@
-virtavästäräkki: not fake but likely just västäräkki
-lyhytnokkahanhi: unclear, can be some other hanhi (Anser)
-viiksitimali: that's typically rain
-pussitiainen: unclear
-viiriäinen: water droplets
-pikkujoutsen: unclear but likely laulujoutsen
-fasaani: unchecked
-pikkusirkku: unclear
-tammitikka: hard to say but not a woodpecker at all, maybe a tit
-jalohaikara: we don't know, could be or more likely something else like harmaahaikara
-luhtahuitti: waves at the lake shore
-nokkavarpunen: likely punarinta
+# Known misidentifications at Parikkala
+#
+# Format: finnish_name <tab> action <tab> label
+#   reinterpret  — not a bird; label says what it actually is
+#   rename       — likely a different species; label is the probable one
+#   flag         — uncertain; label is optional guess
+#
+# Matched against common_name (cname) in species2.py output.
 
+luhtahuitti	reinterpret	aaltoääni
+viiksitimali	reinterpret	sade
+viiriäinen	reinterpret	vesipisarat
+
+pikkujoutsen	rename	laulujoutsen?
+nokkavarpunen	rename	punarinta?
+virtavästäräkki	rename	västäräkki?
+
+tundrakurmitsa	flag	tundrakurmitsa?
+valkoviklo	flag	valkoviklo?
+jalohaikara	flag	harmaahaikara?
+lyhytnokkahanhi	flag	hanhi?
+tammitikka	flag	tiainen?
+nokikana	flag
+pussitiainen	flag
+fasaani	flag
+pikkusirkku	flag
