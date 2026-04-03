@@ -43,13 +43,23 @@ def detect_local_timezone() -> str:
     tz_env = os.environ.get("TZ")
     if tz_env:
         return tz_env
+    # Try /etc/timezone (Debian/Ubuntu)
     try:
-        is_dst = time.localtime().tm_isdst
-    except (OSError, AttributeError):
-        is_dst = -1
-    idx = 1 if is_dst == 1 and len(time.tzname) > 1 else 0
-    candidate = time.tzname[idx] if time.tzname else None
-    return candidate or "UTC"
+        tz = Path("/etc/timezone").read_text().strip()
+        if "/" in tz:
+            return tz
+    except OSError:
+        pass
+    # Try /etc/localtime symlink (most Linux distros)
+    try:
+        link = os.readlink("/etc/localtime")
+        marker = "zoneinfo/"
+        idx = link.find(marker)
+        if idx != -1:
+            return link[idx + len(marker):]
+    except OSError:
+        pass
+    return "UTC"
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -3,7 +3,6 @@
 file_prefix=mokki
 ba=BirdNET-Analyzer
 raw_dir=raw
-res_dir=res
 duration=3600
 
 get_current_qweek() {
@@ -50,11 +49,14 @@ do
        sox -t wav - -c 1 -r 48000 -t flac "$raw_dir/$file_basename.flac" highpass 10
     then
 
-    # Run BirdNET analyzer and ingest results into SQLite in the background
+    # Run BirdNET analyzer, ingest into SQLite, then remove the temp CSV
         (
+            tmp_csv="/tmp/res-$file_basename.txt"
+            trap "rm -f '$tmp_csv'" EXIT
+            # --overlap 1.5 splits 3s analysis windows into halves (offsets at 0, 1.5, 3, ...)
             if python3 "$ba/analyze.py" \
                 --i "$raw_dir/$file_basename.flac" \
-                --o "$res_dir/res-$file_basename.txt" \
+                --o "$tmp_csv" \
                 --lat 61.46 --lon 29.39 \
                 --week "$qweek" \
                 --overlap 1.5 \
@@ -65,7 +67,7 @@ do
                     --db birdnet.sqlite \
                     --default-duration "$duration" \
                     --raw-dir "$raw_dir" \
-                    "$res_dir/res-$file_basename.txt" \
+                    "$tmp_csv" \
                 || logger -t obsloop "ingest failed for $file_basename"
             else
                 logger -t obsloop "analysis failed for $file_basename"

@@ -37,8 +37,8 @@ parser = argparse.ArgumentParser(description=dscr, epilog=eplg,
                                  formatter_class=argparse.RawTextHelpFormatter)
 
 
-parser.add_argument("-p", "--pmin", type=float, default=0.9,
-                    help="confidence, minimum (default: 0.9)")
+parser.add_argument("-p", "--pmin", type=float, default=0.8,
+                    help="confidence, minimum (default: 0.8)")
 parser.add_argument("-l", "--minlag", type=float, default=2.0,
                     help="seconds, min between adjacent included rows (default: 2.0)")
 parser.add_argument("-n", "--nrows", type=int, default=3,

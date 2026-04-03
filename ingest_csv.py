@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS detections (
   notes TEXT,
   UNIQUE (recording_id, offset_start_s, species_id, model_version)
 );
+
+CREATE INDEX IF NOT EXISTS detections_ts_idx
+  ON detections(ts_utc);
+CREATE INDEX IF NOT EXISTS detections_species_ts_idx
+  ON detections(species_id, ts_utc DESC);
+CREATE INDEX IF NOT EXISTS recordings_station_time_idx
+  ON recordings(station_id, ts_start_utc DESC);
 """
 
 DEFAULT_DB = "birdnet.sqlite"
@@ -268,6 +275,7 @@ def ingest_file(
     raw_dir: Path,
     model_timeline: Sequence[ModelVersion],
     default_duration: float | None,
+    species_cache: dict[str, int],
 ) -> tuple[int, int]:
     station, stamp = parse_station_and_stamp(path)
     if station_override:
@@ -280,7 +288,6 @@ def ingest_file(
 
     max_end = 0.0
     detections_to_write = []
-    species_cache: dict[str, int] = {}
 
     for row in read_csv_rows(path):
         try:
@@ -420,6 +427,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         total_inserted = 0
         total_updated = 0
         processed = 0
+        species_cache: dict[str, int] = {}
 
         for path in iter_input_files(args.inputs):
             try:
@@ -431,6 +439,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raw_dir=Path(args.raw_dir),
                     model_timeline=model_timeline,
                     default_duration=args.default_duration,
+                    species_cache=species_cache,
                 )
             except ValueError as exc:
                 logging.warning("Skipping %s: %s", path.name, exc)

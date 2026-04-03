@@ -1,5 +1,5 @@
 # Backlog / TODO
 
-- Catalogue recurring mis-identifications (e.g. luhtahuitti≈wave noise, nokkavarpunen≈punarinta) and add schema support to suppress/flag them during review.
+- Recurring mis-identifications (see FAKES.txt) should be optionally filtered out or presented with a prefix
 - Purge detections with confidence <0.5 from the database and enforce the same threshold on future ingests.
-- Switch raw/res filename timestamps to UTC once the importer and pipeline are ready for the change.
+

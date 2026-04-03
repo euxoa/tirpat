@@ -5,5 +5,5 @@ BirdNET-Analyzer
 nohup.out
 Espoo2023-H1
 stereo
-birdnet.sqlite
+birdnet.sqlite*
 *~
